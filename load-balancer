@@ -1,0 +1,90 @@
+pipeline {
+agent any 
+environment {
+  Google_key = credentials('terraform-auth')
+  }
+  stages {  
+	stage ('credential') {
+	 steps {
+	    sh 'mkdir -p creds'
+		sh 'echo $Google_key | base64 > ./creds/creds.json'
+		}
+		}
+    stage ('startup') {
+		steps  {
+		sh 'mkdir -p startup'
+		sh 'cd startup'
+		sh 'pwd'
+		sh (""" echo "#! /bin/bash\napt-get update\napt-get install -y nginx\nservice nginx start\nsed -i -- 's/nginx/Google Cloud Platform - '"\$HOSTNAME"'/' /var/www/html/index.nginx-debian.html" > ./startup/startup.sh """)
+		sh 'ls' 
+		}
+		}
+		
+	stage ('create instance template') {
+	 steps {
+	 
+	 sh 'gcloud compute instance-templates create nginx-lb-template --metadata-from-file startup-script=./startup/startup.sh --tags=http-server'
+	 sh 'sleep 1'
+	 
+	 }
+	}
+	
+	stage ('Create a target pool') {
+		steps {
+		 
+	  sh 'gcloud compute target-pools create nginx-lb-pool --region us-central1'
+		 sh 'sleep 1'
+		
+		}
+	}
+	
+	stage ('Create MIG and add instances to targetpool') {
+	steps{
+	sh '(gcloud compute instance-groups managed create nginx-lb-group --base-instance-name nginx --size 2 --template nginx-lb-template --target-pool nginx-lb-pool --region us-central1)'
+	sh 'sleep 180'
+	}
+	}
+	
+	stage ('Instances List') {
+	steps {
+	sh 'gcloud compute instances list'
+	}
+	}
+	
+	stage ('HTTP Firewall') {
+	steps {
+   sh 'gcloud compute firewall-rules create allow-lb-fw-http --allow tcp:80'	
+   sh 'sleep 1'
+
+	}
+	}
+		
+	stage('CREATE HTTP LB'){
+	steps{
+	
+	sh 'gcloud compute forwarding-rules create nginx-lb --region us-central1 --ports=80 --target-pool nginx-lb-pool --address=STATIC_IP'
+
+	sh 'sleep 120'
+	}
+	}
+	
+   stage ('Forwarding Rules list') {
+   
+   steps {
+	sh 'gcloud compute forwarding-rules list'	
+   } 
+   }
+   
+   stage ('TEST THE Application'){
+   steps {
+  
+     sh 'curl http://STATIC_IP'
+   
+   }
+   }
+  }
+  
+  }
+  
+  
+  
